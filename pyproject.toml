@@ -22,7 +22,7 @@ addopts = "-ra"
 
 [tool.coverage.run]
 branch = true
-source = ["mini_git"]
+source = ["mini_git", "main"]
 
 [tool.coverage.report]
 show_missing = true
