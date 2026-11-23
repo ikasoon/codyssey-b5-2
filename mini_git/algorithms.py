@@ -2,13 +2,22 @@
 
 from collections import deque
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any, TypeVar
+from typing import Protocol, TypeAlias, TypeVar
+
+from mini_git.domain import CommitHash
 
 T = TypeVar("T")
-ParentGraph = Mapping[str, Sequence[str]]
+Key = TypeVar("Key", bound="_SupportsLessEqual")
+ParentGraph: TypeAlias = Mapping[CommitHash, Sequence[CommitHash]]
 
 
-def merge_sort(items: Sequence[T], key: Callable[[T], Any]) -> list[T]:
+class _SupportsLessEqual(Protocol):
+    """같은 타입의 정렬 키끼리 <=로 비교할 수 있다."""
+
+    def __le__(self: Key, other: Key, /) -> bool: ...
+
+
+def merge_sort(items: Sequence[T], key: Callable[[T], Key]) -> list[T]:
     """입력을 변경하지 않고 key 기준으로 오름차순 안정 병합 정렬한다."""
     if len(items) < 2:
         return list(items)
@@ -29,10 +38,10 @@ def merge_sort(items: Sequence[T], key: Callable[[T], Any]) -> list[T]:
     return result
 
 
-def topological_order(parents: ParentGraph) -> list[str]:
+def topological_order(parents: ParentGraph) -> list[CommitHash]:
     """Kahn 알고리즘으로 모든 부모가 자식보다 앞서는 순서를 구한다."""
     indegrees = {node: len(links) for node, links in parents.items()}
-    children: dict[str, list[str]] = {node: [] for node in parents}
+    children: dict[CommitHash, list[CommitHash]] = {node: [] for node in parents}
     for child, links in parents.items():
         for parent in links:
             children[parent].append(child)
@@ -50,7 +59,7 @@ def topological_order(parents: ParentGraph) -> list[str]:
     return result
 
 
-def ancestor_hashes(parents: ParentGraph, start: str) -> list[str]:
+def ancestor_hashes(parents: ParentGraph, start: CommitHash) -> list[CommitHash]:
     """반복형 DFS로 자신을 제외한 모든 조상을 중복 없이 구한다."""
     visited = {start}
     pending = list(parents[start])
@@ -65,9 +74,13 @@ def ancestor_hashes(parents: ParentGraph, start: str) -> list[str]:
     return result
 
 
-def shortest_path(parents: ParentGraph, start: str, end: str) -> list[str] | None:
+def shortest_path(
+    parents: ParentGraph,
+    start: CommitHash,
+    end: CommitHash,
+) -> list[CommitHash] | None:
     """무방향 최단 경로 중 '->'로 연결한 문자열이 가장 작은 것을 구한다."""
-    neighbors: dict[str, list[str]] = {node: [] for node in parents}
+    neighbors: dict[CommitHash, list[CommitHash]] = {node: [] for node in parents}
     for child, links in parents.items():
         for parent in links:
             neighbors[child].append(parent)

@@ -23,11 +23,12 @@ just run
 | `just` | 사용 가능한 명령 표시 |
 | `just sync` | `uv sync --locked`로 환경 준비 |
 | `just run` | `uv run --locked python main.py`로 REPL 실행 |
+| `just typecheck` | mypy로 진입점과 애플리케이션을 Python 3.10 기준으로 검사 |
 | `just test` | pytest 실행, 커버리지 출력 및 기준 검사 |
-| `just check` | 잠금 파일 최신 상태 검사 후 `just test` 실행 |
+| `just check` | 잠금 파일 최신 상태 확인, 타입 검사, 테스트 실행 |
 | `just lock` | 의존성 설정 변경 후 `uv.lock` 갱신 |
 
-개발 의존성은 pytest와 coverage다. `pyproject.toml`과 `uv.lock`을 함께 관리한다.
+개발 의존성은 mypy, pytest, coverage다. `pyproject.toml`과 `uv.lock`을 함께 관리한다.
 `just test`는 애플리케이션과 진입점의 **라인 80%, 분기 70%** 기준을 각각 검사한다.
 상세 결과는 터미널과 `.cache/coverage.json`에서 확인한다.
 
@@ -89,7 +90,9 @@ quit
 | 파일 | 역할 |
 | --- | --- |
 | `main.py` | 실행 진입점 |
-| `mini_git/cli.py` | 명령 해석, 결과 형식, REPL |
+| `mini_git/cli.py` | 명령 실행, 결과 형식, REPL |
+| `mini_git/commands.py` | 문자열 파싱, 명령별 인자 타입 |
+| `mini_git/domain.py` | 커밋 해시, 브랜치·작성자 이름, 정렬 옵션 타입 |
 | `mini_git/repository.py` | 불변 커밋 노드, 브랜치·HEAD와 저장소 상태 |
 | `mini_git/algorithms.py` | 병합 정렬, 위상 정렬, BFS·DFS |
 | `mini_git/indexing.py` | 키워드·작성자 역색인 |

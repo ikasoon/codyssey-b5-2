@@ -1,9 +1,23 @@
 """CLI 문법 해석, 결과 형식과 대화형 입출력."""
 
 from collections.abc import Sequence
-import shlex
 
-from mini_git.repository import Commit, MiniGitError, Repository
+from mini_git.commands import (
+    AncestorsCommand,
+    BranchCommand,
+    Command,
+    CommitCommand,
+    ExitCommand,
+    InitCommand,
+    LogCommand,
+    PathCommand,
+    SearchByAuthor,
+    SearchByKeyword,
+    SwitchCommand,
+    parse_command,
+)
+from mini_git.domain import MiniGitError
+from mini_git.repository import Commit, Repository
 
 
 def format_commits(commits: Sequence[Commit], empty: str = "No commits") -> str:
@@ -17,69 +31,51 @@ def format_commits(commits: Sequence[Commit], empty: str = "No commits") -> str:
     )
 
 
-def _require_args(args: list[str], count: int) -> None:
-    if len(args) != count or any(not argument.strip() for argument in args):
-        raise MiniGitError("Invalid args")
+def _format_search_results(matches: Sequence[Commit]) -> str:
+    if not matches:
+        return "No commits found"
+    suffix = "" if len(matches) == 1 else "s"
+    return f"Found {len(matches)} commit{suffix}:\n" + format_commits(matches)
 
 
 def execute(line: str, repository: Repository) -> str | None:
     """명령 결과를 반환한다. 빈 입력은 빈 문자열, 종료 명령은 None이다."""
-    try:
-        tokens = shlex.split(line)
-    except ValueError:
-        raise MiniGitError("Invalid args") from None
-    if not tokens:
+    command = parse_command(line)
+    if command is None:
         return ""
-    command = tokens[0].upper()
-    args = tokens[1:]
+    return _execute_command(command, repository)
 
-    if command in {"EXIT", "QUIT"}:
-        _require_args(args, 0)
-        return None
-    if command == "INIT":
-        _require_args(args, 1)
-        repository.initialize(args[0])
-        return ("Initialized repository.\nCurrent branch: main\n"
-                f"Current user: {repository.author}")
-    if command == "BRANCH":
-        _require_args(args, 1)
-        repository.create_branch(args[0])
-        return f"Created branch: {args[0]}"
-    if command == "SWITCH":
-        _require_args(args, 1)
-        repository.switch(args[0])
-        return f"Switched to branch: {args[0]}"
-    if command == "COMMIT":
-        _require_args(args, 1)
-        commit = repository.commit(args[0])
-        return f"[{repository.current_branch} {commit.hash}] {commit.message}"
-    if command == "LOG":
-        if not args:
-            return format_commits(repository.log())
-        _require_args(args, 1)
-        if args[0] not in {"--sort-by=date", "--sort-by=author"}:
-            raise MiniGitError("Invalid args")
-        return format_commits(repository.log(args[0].split("=", 1)[1]))
-    if command == "PATH":
-        _require_args(args, 2)
-        path = repository.path(args[0], args[1])
-        return "Path: " + " -> ".join(path) if path is not None else "No path"
-    if command == "ANCESTORS":
-        _require_args(args, 1)
-        return format_commits(repository.ancestors(args[0]), empty="No ancestors")
-    if command == "SEARCH":
-        _require_args(args, 1)
-        if args[0].startswith("--author="):
-            matches = repository.search_author(args[0].split("=", 1)[1])
-        elif args[0].startswith("--"):
-            raise MiniGitError("Invalid args")
-        else:
-            matches = repository.search_keyword(args[0])
-        if not matches:
-            return "No commits found"
-        suffix = "" if len(matches) == 1 else "s"
-        return f"Found {len(matches)} commit{suffix}:\n" + format_commits(matches)
-    raise MiniGitError(f"Unknown command: {tokens[0]}")
+
+def _execute_command(command: Command, repository: Repository) -> str | None:
+    match command:
+        case ExitCommand():
+            return None
+        case InitCommand(author=author):
+            repository.initialize(author)
+            return (
+                f"Initialized repository.\nCurrent branch: {repository.current_branch}\n"
+                f"Current user: {repository.author}"
+            )
+        case BranchCommand(name=name):
+            repository.create_branch(name)
+            return f"Created branch: {name}"
+        case SwitchCommand(name=name):
+            repository.switch(name)
+            return f"Switched to branch: {name}"
+        case CommitCommand(message=message):
+            commit = repository.commit(message)
+            return f"[{repository.current_branch} {commit.hash}] {commit.message}"
+        case LogCommand(sort_by=sort_by):
+            return format_commits(repository.log(sort_by))
+        case PathCommand(start=start, end=end):
+            path = repository.path(start, end)
+            return "Path: " + " -> ".join(path) if path is not None else "No path"
+        case AncestorsCommand(hash=commit_hash):
+            return format_commits(repository.ancestors(commit_hash), empty="No ancestors")
+        case SearchByAuthor(author=author):
+            return _format_search_results(repository.search_author(author))
+        case SearchByKeyword(query=query):
+            return _format_search_results(repository.search_keyword(query))
 
 
 def run() -> None:

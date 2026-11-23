@@ -1,8 +1,10 @@
 """커밋·브랜치 상태와 알고리즘을 연결하는 메모리 저장소."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from types import MappingProxyType
+from typing import Final
 
 from mini_git.algorithms import (
     ancestor_hashes,
@@ -10,135 +12,178 @@ from mini_git.algorithms import (
     shortest_path,
     topological_order,
 )
+from mini_git.domain import AuthorName, BranchName, CommitHash, LogSort
+from mini_git.domain import MiniGitError as MiniGitError
 from mini_git.indexing import InvertedIndex
 
-
-class MiniGitError(ValueError):
-    """CLI에 그대로 표시할 수 있는 사용자 입력 오류."""
+_MAIN_BRANCH: Final = BranchName("main")
 
 
 @dataclass(frozen=True)
 class Commit:
     """생성 후 부모와 메타데이터를 변경할 수 없는 커밋 노드."""
 
-    hash: str
+    hash: CommitHash
     message: str
-    author: str
+    author: AuthorName
     timestamp: datetime
-    parents: tuple[str, ...]
+    parents: tuple[CommitHash, ...]
+
+
+@dataclass
+class _InitializedState:
+    """초기화 이후의 작성자와 브랜치별 커밋 참조."""
+
+    author: AuthorName
+    current_branch: BranchName
+    branches: dict[BranchName, CommitHash | None]
+
+    @property
+    def head(self) -> CommitHash | None:
+        return self.branches[self.current_branch]
 
 
 class Repository:
     """브랜치 끝과 커밋 DAG 및 역색인을 세션 메모리에 유지한다."""
 
     def __init__(self, clock: Callable[[], datetime] | None = None) -> None:
-        self.commits: dict[str, Commit] = {}
-        self.branches: dict[str, str | None] = {}
-        self.current_branch = "main"
-        self.author = ""
-        self._initialized = False
+        self._commits: dict[CommitHash, Commit] = {}
+        self._state: _InitializedState | None = None
         self._next_id = 1
-        self._parents: dict[str, tuple[str, ...]] = {}
+        self._parents: dict[CommitHash, tuple[CommitHash, ...]] = {}
         self._index = InvertedIndex()
         self._clock = clock if clock is not None else lambda: datetime.now(timezone.utc)
 
     @property
-    def head(self) -> str | None:
-        """현재 브랜치가 가리키는 커밋 hash를 반환한다."""
-        self._require_initialized()
-        return self.branches[self.current_branch]
+    def commits(self) -> Mapping[CommitHash, Commit]:
+        """해시로 커밋을 조회하는 읽기 전용 뷰를 반환한다."""
+        return MappingProxyType(self._commits)
 
-    def initialize(self, author: str) -> None:
+    @property
+    def branches(self) -> Mapping[BranchName, CommitHash | None]:
+        """브랜치별 마지막 커밋을 읽기 전용 뷰로 반환한다."""
+        state = self._state
+        return MappingProxyType(state.branches if state is not None else {})
+
+    @property
+    def current_branch(self) -> BranchName:
+        """현재 상태를 표시할 브랜치 이름을 반환한다."""
+        state = self._state
+        return state.current_branch if state is not None else _MAIN_BRANCH
+
+    @property
+    def author(self) -> AuthorName:
+        """현재 작성자를 반환한다. 초기화 전에는 표시용 빈 문자열이다."""
+        state = self._state
+        return state.author if state is not None else AuthorName("")
+
+    @author.setter
+    def author(self, author: AuthorName) -> None:
+        state = self._require_state()
+        self._validate_text(author)
+        state.author = author
+
+    @property
+    def head(self) -> CommitHash | None:
+        """현재 브랜치가 가리키는 커밋 해시를 반환한다."""
+        return self._require_state().head
+
+    def initialize(self, author: AuthorName) -> None:
         """빈 main 브랜치와 작성자를 설정한다. 재초기화는 거부한다."""
         self._validate_text(author)
-        if self._initialized:
+        if self._state is not None:
             raise MiniGitError("Repository already initialized")
-        self.branches["main"] = None
-        self.author = author
-        self._initialized = True
+        self._state = _InitializedState(
+            author=author,
+            current_branch=_MAIN_BRANCH,
+            branches={_MAIN_BRANCH: None},
+        )
 
-    def create_branch(self, name: str) -> None:
+    def create_branch(self, name: BranchName) -> None:
         """현재 HEAD를 가리키는 새 브랜치를 만든다."""
-        self._require_initialized()
+        state = self._require_state()
         self._validate_text(name)
-        if name in self.branches:
+        if name in state.branches:
             raise MiniGitError(f"Branch already exists: {name}")
-        self.branches[name] = self.head
+        state.branches[name] = state.head
 
-    def switch(self, name: str) -> None:
+    def switch(self, name: BranchName) -> None:
         """기존 브랜치로 현재 브랜치를 전환한다."""
-        self._require_initialized()
-        if name not in self.branches:
+        state = self._require_state()
+        if name not in state.branches:
             raise MiniGitError(f"Unknown branch: {name}")
-        self.current_branch = name
+        state.current_branch = name
 
     def commit(self, message: str) -> Commit:
         """현재 HEAD를 부모로 하는 유일한 hash의 커밋을 추가한다."""
-        self._require_initialized()
+        state = self._require_state()
         self._validate_text(message)
-        head = self.head
+        head = state.head
         commit = Commit(
-            hash=f"{self._next_id:08x}",
+            hash=CommitHash(f"{self._next_id:08x}"),
             message=message,
-            author=self.author,
+            author=state.author,
             timestamp=self._clock(),
             parents=() if head is None else (head,),
         )
         self._next_id += 1
-        self.commits[commit.hash] = commit
+        self._commits[commit.hash] = commit
         self._parents[commit.hash] = commit.parents
-        self.branches[self.current_branch] = commit.hash
+        state.branches[state.current_branch] = commit.hash
         self._index.add(commit.hash, commit.message, commit.author)
         return commit
 
-    def log(self, sort_by: str | None = None) -> list[Commit]:
+    def log(self, sort_by: LogSort | None = None) -> list[Commit]:
         """전체 브랜치의 커밋을 위상 순서 또는 지정 기준의 오름차순으로 구한다."""
-        self._require_initialized()
-        commits = [self.commits[node] for node in topological_order(self._parents)]
-        if sort_by is None:
-            return commits
-        if sort_by == "date":
-            return merge_sort(commits, key=lambda commit: commit.timestamp)
-        if sort_by == "author":
-            return merge_sort(commits, key=lambda commit: commit.author)
+        self._require_state()
+        commits = [self._commits[node] for node in topological_order(self._parents)]
+        match sort_by:
+            case None:
+                return commits
+            case "date":
+                return merge_sort(commits, key=lambda commit: commit.timestamp)
+            case "author":
+                return merge_sort(commits, key=lambda commit: commit.author)
         raise MiniGitError("Invalid args")
 
-    def ancestors(self, commit_hash: str) -> list[Commit]:
+    def ancestors(self, commit_hash: CommitHash) -> list[Commit]:
         """지정 커밋의 모든 조상을 DFS 발견 순서로 반환한다."""
-        self._get_commit(commit_hash)
-        return [self.commits[node] for node in ancestor_hashes(self._parents, commit_hash)]
+        commit = self._get_commit(commit_hash)
+        return [self._commits[node] for node in ancestor_hashes(self._parents, commit.hash)]
 
-    def path(self, start: str, end: str) -> list[str] | None:
+    def path(self, start: CommitHash, end: CommitHash) -> list[CommitHash] | None:
         """커밋 사이의 무방향 최단 경로를 반환한다."""
-        self._get_commit(start)
-        self._get_commit(end)
-        return shortest_path(self._parents, start, end)
+        source = self._get_commit(start)
+        target = self._get_commit(end)
+        return shortest_path(self._parents, source.hash, target.hash)
 
     def search_keyword(self, query: str) -> list[Commit]:
         """전체 커밋 순회 없이 키워드 역색인을 조회한다."""
-        self._require_initialized()
+        self._require_state()
         self._validate_text(query)
         return self._indexed_commits(self._index.find_keyword(query))
 
-    def search_author(self, author: str) -> list[Commit]:
+    def search_author(self, author: AuthorName) -> list[Commit]:
         """전체 커밋 순회 없이 작성자 역색인을 조회한다."""
-        self._require_initialized()
+        self._require_state()
         self._validate_text(author)
         return self._indexed_commits(self._index.find_author(author))
 
-    def _indexed_commits(self, hashes: Iterable[str]) -> list[Commit]:
+    def _indexed_commits(self, hashes: Iterable[CommitHash]) -> list[Commit]:
         ordered = merge_sort(list(hashes), key=lambda value: value)
-        return [self.commits[node] for node in ordered]
+        return [self._commits[node] for node in ordered]
 
-    def _get_commit(self, commit_hash: str) -> Commit:
-        self._require_initialized()
-        if commit_hash not in self.commits:
+    def _get_commit(self, commit_hash: CommitHash) -> Commit:
+        self._require_state()
+        if commit_hash not in self._commits:
             raise MiniGitError(f"Unknown commit: {commit_hash}")
-        return self.commits[commit_hash]
+        return self._commits[commit_hash]
 
-    def _require_initialized(self) -> None:
-        if not self._initialized:
+    def _require_state(self) -> _InitializedState:
+        state = self._state
+        if state is None:
             raise MiniGitError("Repository not initialized")
+        return state
 
     @staticmethod
     def _validate_text(value: str) -> None:

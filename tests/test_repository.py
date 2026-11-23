@@ -42,6 +42,25 @@ def test_initialize_sets_author_main_and_empty_head(repository):
     assert repository.author == "Alice Kim"
 
 
+def test_commit_and_branch_views_reflect_changes_and_block_writes():
+    repository = Repository()
+    assert repository.commits == repository.branches == {}
+    assert repository.current_branch == "main"
+    assert repository.author == ""
+    repository.initialize("Alice")
+    commits = repository.commits
+    branches = repository.branches
+
+    commit = repository.commit("first")
+    with pytest.raises(TypeError):
+        commits[commit.hash] = commit
+    with pytest.raises(TypeError):
+        branches["main"] = None
+
+    assert commits[commit.hash] == commit
+    assert branches["main"] == repository.head == commit.hash
+
+
 @pytest.mark.parametrize("text", ["", " ", "\t\n"])
 def test_initialize_rejects_blank_author(text):
     with pytest.raises(MiniGitError, match="^Invalid args$"):
@@ -134,7 +153,7 @@ def test_counter_hashes_are_unique_and_default_clock_uses_utc():
     assert commits[0].timestamp.tzinfo == timezone.utc
 
 
-def test_search_looks_up_index_candidates_without_scanning_commits(repository):
+def test_search_looks_up_index_candidates_without_scanning_commits(repository, monkeypatch):
     first = repository.commit("Add LOGIN login")
     repository.commit("Add payment")
 
@@ -148,7 +167,7 @@ def test_search_looks_up_index_candidates_without_scanning_commits(repository):
         def items(self):
             raise AssertionError("전체 커밋 순회는 허용하지 않는다")
 
-    repository.commits = LookupOnly(repository.commits)
+    monkeypatch.setattr(repository, "_commits", LookupOnly(repository.commits))
     assert repository.search_keyword("LOGIN") == [first]
     assert repository.search_keyword("add login") == [first]
     assert len(repository.search_author("Alice Kim")) == 2

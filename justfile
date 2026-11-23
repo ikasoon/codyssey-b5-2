@@ -23,7 +23,12 @@ test *args:
     uv run --locked coverage json -o .cache/coverage.json
     uv run --locked python scripts/check_coverage.py
 
-# 잠금 파일과 전체 테스트를 검사한다.
+# 애플리케이션을 Python 3.10 기준으로 정적 타입 검사한다.
+typecheck:
+    uv run --locked mypy
+
+# 잠금 파일과 타입 및 전체 테스트를 검사한다.
 check:
     uv lock --check
+    just typecheck
     just test
