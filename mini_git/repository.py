@@ -133,6 +133,18 @@ class Repository:
         self._index.add(commit.hash, commit.message, commit.author)
         return commit
 
+    def branches_by_commit(self) -> dict[CommitHash, list[BranchName]]:
+        """각 커밋을 이력에 포함하는 브랜치를 생성 순서로 구한다."""
+        branches_by_commit: dict[CommitHash, list[BranchName]] = {}
+        for branch, head in self._require_state().branches.items():
+            if head is None:
+                continue
+            history = ancestor_hashes(self._parents, head)
+            history.append(head)
+            for commit_hash in history:
+                branches_by_commit.setdefault(commit_hash, []).append(branch)
+        return branches_by_commit
+
     def log(self, sort_by: LogSort | None = None) -> list[Commit]:
         """전체 브랜치의 커밋을 위상 순서 또는 지정 기준의 오름차순으로 구한다."""
         self._require_state()

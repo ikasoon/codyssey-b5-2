@@ -28,15 +28,20 @@ def test_initialize_accepts_quoted_unicode_name():
 
 def test_cli_scenario_with_branches_log_paths_and_search(repository):
     assert execute('CoMmIt "Initial commit"', repository) == "[main 00000001] Initial commit"
+    assert execute("LOG", repository) == (
+        "commit 00000001 (Alice Kim, 2026-01-01T00:00:00+00:00) [main]\nInitial commit"
+    )
     assert execute("BRANCH feature", repository) == "Created branch: feature"
     assert execute("switch feature", repository) == "Switched to branch: feature"
     assert execute('commit "Add LOGIN feature"', repository) == "[feature 00000002] Add LOGIN feature"
     execute("SWITCH main", repository)
     execute('COMMIT "Add payment feature"', repository)
     log = execute("log", repository)
-    assert log.index("00000001") < log.index("00000002") < log.index("00000003")
-    assert "Alice Kim, 2026-01-01T00:00:00+00:00" in log
-    assert "Add LOGIN feature" in log
+    assert log == (
+        "commit 00000001 (Alice Kim, 2026-01-01T00:00:00+00:00) [main, feature]\nInitial commit\n"
+        "commit 00000002 (Alice Kim, 2026-01-01T00:00:00+00:00) [feature]\nAdd LOGIN feature\n"
+        "commit 00000003 (Alice Kim, 2026-01-01T00:00:00+00:00) [main]\nAdd payment feature"
+    )
     assert execute("PATH 00000002 00000003", repository) == (
         "Path: 00000002 -> 00000001 -> 00000003"
     )
@@ -58,10 +63,26 @@ def test_empty_log_ancestors_and_disconnected_path(repository):
     assert execute("LOG", repository) == "No commits"
     execute("BRANCH empty", repository)
     execute('COMMIT "main root"', repository)
+    assert execute("LOG", repository) == (
+        "commit 00000001 (Alice Kim, 2026-01-01T00:00:00+00:00) [main]\nmain root"
+    )
     assert execute("ANCESTORS 00000001", repository) == "No ancestors"
     execute("SWITCH empty", repository)
     execute('COMMIT "separate root"', repository)
+    assert execute("LOG", repository) == (
+        "commit 00000001 (Alice Kim, 2026-01-01T00:00:00+00:00) [main]\nmain root\n"
+        "commit 00000002 (Alice Kim, 2026-01-01T00:00:00+00:00) [empty]\nseparate root"
+    )
     assert execute("PATH 00000001 00000002", repository) == "No path"
+
+
+def test_log_quotes_branch_names_containing_the_list_separator(repository):
+    execute('COMMIT "Initial commit"', repository)
+    execute('BRANCH "feature, staging"', repository)
+    assert execute("LOG", repository) == (
+        "commit 00000001 (Alice Kim, 2026-01-01T00:00:00+00:00) "
+        "[main, 'feature, staging']\nInitial commit"
+    )
 
 
 @pytest.mark.parametrize("line", [

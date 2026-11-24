@@ -1,6 +1,6 @@
 """CLI 문법 해석, 결과 형식과 대화형 입출력."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from mini_git.commands import (
     AncestorsCommand,
@@ -16,19 +16,43 @@ from mini_git.commands import (
     SwitchCommand,
     parse_command,
 )
-from mini_git.domain import MiniGitError
+from mini_git.domain import BranchName, CommitHash, MiniGitError
 from mini_git.repository import Commit, Repository
 
 
-def format_commits(commits: Sequence[Commit], empty: str = "No commits") -> str:
+def _format_branch_name(name: BranchName) -> str:
+    if (
+        name != name.strip()
+        or not name.isprintable()
+        or any(character in name for character in ",[]'\"")
+    ):
+        return repr(name)
+    return name
+
+
+def format_commits(
+    commits: Sequence[Commit],
+    empty: str = "No commits",
+    *,
+    branches_by_commit: Mapping[CommitHash, Sequence[BranchName]] | None = None,
+) -> str:
     """커밋 메타데이터를 입출력 없이 일관된 텍스트로 변환한다."""
     if not commits:
         return empty
-    return "\n".join(
-        f"commit {commit.hash} ({commit.author}, "
-        f"{commit.timestamp.isoformat(timespec='seconds')})\n{commit.message}"
-        for commit in commits
-    )
+    if branches_by_commit is None:
+        branches_by_commit = {}
+    entries = []
+    for commit in commits:
+        branches = branches_by_commit.get(commit.hash, ())
+        label = ""
+        if branches:
+            names = ", ".join(_format_branch_name(branch) for branch in branches)
+            label = f" [{names}]"
+        entries.append(
+            f"commit {commit.hash} ({commit.author}, "
+            f"{commit.timestamp.isoformat(timespec='seconds')}){label}\n{commit.message}"
+        )
+    return "\n".join(entries)
 
 
 def _format_search_results(matches: Sequence[Commit]) -> str:
@@ -66,7 +90,9 @@ def _execute_command(command: Command, repository: Repository) -> str | None:
             commit = repository.commit(message)
             return f"[{repository.current_branch} {commit.hash}] {commit.message}"
         case LogCommand(sort_by=sort_by):
-            return format_commits(repository.log(sort_by))
+            return format_commits(
+                repository.log(sort_by), branches_by_commit=repository.branches_by_commit()
+            )
         case PathCommand(start=start, end=end):
             path = repository.path(start, end)
             return "Path: " + " -> ".join(path) if path is not None else "No path"
